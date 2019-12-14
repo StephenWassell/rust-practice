@@ -1,8 +1,8 @@
 use structopt::StructOpt;
-pub mod lib;
+use queens;
 
 #[derive(StructOpt)]
-#[structopt(name = "8 queens", about = "An example of StructOpt usage.")]
+#[structopt(name = "Queens", about = "Find solutions to the n-queens problem.")]
 struct Opt {
     #[structopt(short, long, default_value = "8")]
     num: usize,
@@ -13,5 +13,7 @@ struct Opt {
 
 fn main() {
 	let opt = Opt::from_args();
-    println!("{}", lib::queens(opt.num, opt.quiet));
+    println!("Found {} solutions for board size {}",
+    	queens::queens(opt.num, opt.quiet),
+    	opt.num);
 }
