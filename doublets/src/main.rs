@@ -32,8 +32,11 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
 
-    if opt.head.len() != opt.tail.len() {
-        println!("Error: the head and tail words must be the same length.");
+    if opt.head.len() != opt.tail.len()
+        || opt.head.len() != opt.head.as_bytes().len()
+        || opt.head.as_bytes().len() != opt.tail.as_bytes().len()
+    {
+        println!("Error: the head and tail words must be the same length and be ascii only.");
         return;
     }
 
@@ -45,5 +48,5 @@ fn main() {
         opt.head.len()
     );
 
-    doublets::find(&opt.head, &opt.tail, &words, opt.depth);
+    doublets::find(&opt.head.to_lowercase(), &opt.tail.to_lowercase(), &words, opt.depth);
 }
