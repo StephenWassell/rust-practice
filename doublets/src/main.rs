@@ -17,36 +17,43 @@ fn read_words(path: &str, length: usize) -> HashSet<String> {
 }
 
 #[derive(StructOpt)]
-#[structopt(name = "Doublets", about = "x")]
+#[structopt(
+    name = "Doublets",
+    about = "Find solutions for Lewis Carroll's Doublets puzzles."
+)]
 struct Opt {
-    #[structopt(short, long, default_value = "10")]
-    depth: usize,
+    #[structopt(
+        short,
+        long,
+        default_value = "0",
+        about = "Maximum number of steps between the head and tail words; default is the length of the words."
+    )]
+    steps: usize,
 
     #[structopt(short, long, default_value = "/usr/share/dict/words")]
-    words: String,
+    dict: String,
 
+    #[structopt(about = "The starting word.")]
     head: String,
+    #[structopt(about = "The ending word.")]
     tail: String,
 }
 
 fn main() {
     let opt = Opt::from_args();
 
-    if opt.head.len() != opt.tail.len()
-        || opt.head.len() != opt.head.as_bytes().len()
-        || opt.head.as_bytes().len() != opt.tail.as_bytes().len()
-    {
-        println!("Error: the head and tail words must be the same length and be ascii only.");
+    if opt.head.len() != opt.tail.len() {
+        println!("Error: the head and tail words must be the same length.");
         return;
     }
 
-    let words = read_words(&opt.words, opt.head.len());
+    let dict = read_words(&opt.dict, opt.head.len());
 
     println!(
         "Dictionary size: {} words of length {}",
-        words.len(),
+        dict.len(),
         opt.head.len()
     );
 
-    doublets::find(&opt.head.to_lowercase(), &opt.tail.to_lowercase(), &words, opt.depth);
+    doublets::find(&opt.head, &opt.tail, dict, opt.steps);
 }
