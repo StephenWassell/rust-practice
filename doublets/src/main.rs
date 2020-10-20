@@ -5,6 +5,8 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use structopt::StructOpt;
 
+// Read a dictionary file with one word per line.
+// The search in doublets::find will only consider lowercase words, to exclude proper names.
 fn read_words(path: &str, length: usize) -> HashSet<String> {
     let f = File::open(path).unwrap();
     let reader = BufReader::new(f);
@@ -22,20 +24,13 @@ fn read_words(path: &str, length: usize) -> HashSet<String> {
     about = "Find solutions for Lewis Carroll's Doublets puzzles."
 )]
 struct Opt {
-    #[structopt(
-        short,
-        long,
-        default_value = "0",
-        about = "Maximum number of steps between the head and tail words; default is the length of the words."
-    )]
+    #[structopt(short, long, default_value = "0")]
     steps: usize,
 
     #[structopt(short, long, default_value = "/usr/share/dict/words")]
     dict: String,
 
-    #[structopt(about = "The starting word.")]
     head: String,
-    #[structopt(about = "The ending word.")]
     tail: String,
 }
 
