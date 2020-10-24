@@ -1,13 +1,16 @@
 use doublets;
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 use structopt::StructOpt;
 
+// Faster for small keys than the standard HashSet
+// (see http://cglab.ca/%7Eabeinges/blah/hash-rs/)
+use fnv::FnvHashSet;
+
 // Read a dictionary file with one word per line.
 // The search in doublets::find will only consider lowercase words, to exclude proper names.
-fn read_words(path: &str, length: usize) -> HashSet<String> {
+fn read_words(path: &str, length: usize) -> FnvHashSet<String> {
     let f = File::open(path).unwrap();
     let reader = BufReader::new(f);
     reader

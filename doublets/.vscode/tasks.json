@@ -6,10 +6,19 @@
         {
             "label": "run",
             "type": "shell",
-            "command": "cargo run head tail",
+            "command": "cargo run --release head tail",
             "problemMatcher": [
                 "$rustc"
             ]
+        },
+        {
+            "type": "cargo",
+            "subcommand": "build --release",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "build",
+            "label": "Rust: cargo build - doublets"
         }
     ]
 }

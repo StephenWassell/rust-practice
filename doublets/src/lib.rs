@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use fnv::FnvHashSet;
 
 struct State {
     // Initially the head word, updated during the iteration until it's equal to the tail word.
@@ -8,7 +8,7 @@ struct State {
     // The progress so far to the solution, starting with the head word.
     body: Vec<Vec<char>>,
     // The contents of the dictionary.
-    dict: HashSet<String>,
+    dict: FnvHashSet<String>,
     // The length of the words in chars.
     len: usize,
     // How many solutions were found.
@@ -69,7 +69,7 @@ fn find_rec(s: &mut State, depth: usize, previous_i: usize) {
     s.body.pop();
 }
 
-pub fn find(head: &str, tail: &str, dict: HashSet<String>, steps: usize) {
+pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
     let mut state = State {
         word: head.to_lowercase().chars().collect(),
         tail: tail.to_lowercase().chars().collect(),
