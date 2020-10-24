@@ -1,4 +1,3 @@
-use doublets;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -17,7 +16,6 @@ fn read_words(path: &str, length: usize) -> FnvHashSet<String> {
         .lines()
         .map(|w| w.unwrap())
         .filter(|w| w.len() == length)
-        .map(|w| w.to_string())
         .collect()
 }
 
