@@ -7,12 +7,12 @@ struct State {
     tail: Vec<char>,
     // The progress so far to the solution, starting with the head word.
     body: Vec<Vec<char>>,
-    // The contents of the dictionary.
-    dict: FnvHashSet<String>,
     // The length of the words in chars.
     len: usize,
     // How many solutions were found.
     count: usize,
+    // Remaining recursion depth, stop when it reaches 0.
+    depth: usize,
 }
 
 fn to_string(v: &Vec<char>) -> String {
@@ -37,10 +37,13 @@ fn print_solution(s: &State) {
 
 // Recursively search for a solution until we reach the specified depth.
 // Use the usual depth first backtracking method.
-fn find_rec(s: &mut State, depth: usize, previous_i: usize) {
-    if depth == 0 {
+fn find_rec(s: &mut State, previous_i: usize, dict: &FnvHashSet<String>) {
+    if s.depth == 0 {
         return;
     }
+
+    s.depth -= 1;
+
     // Add this word to the progress so far (on the first call it's the head word).
     s.body.push(s.word.clone());
 
@@ -58,8 +61,8 @@ fn find_rec(s: &mut State, depth: usize, previous_i: usize) {
                 print_solution(s);
                 s.count += 1;
             // Recurse if the word is not already used, and is in the dictionary.
-            } else if !s.body.contains(&s.word) && s.dict.contains(&to_string(&s.word)) {
-                find_rec(s, depth - 1, i);
+            } else if !s.body.contains(&s.word) && dict.contains(&to_string(&s.word)) {
+                find_rec(s, i, dict);
             }
         }
 
@@ -67,6 +70,7 @@ fn find_rec(s: &mut State, depth: usize, previous_i: usize) {
     }
 
     s.body.pop();
+    s.depth += 1;
 }
 
 pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
@@ -74,17 +78,16 @@ pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
         word: head.to_lowercase().chars().collect(),
         tail: tail.to_lowercase().chars().collect(),
         body: Vec::new(),
-        dict: dict,
         len: head.len(),
         count: 0,
+        // Work out the maximum recursion depth, plus one to include the head word.
+        depth: 1 + if steps == 0 { head.len() } else { steps },
     };
 
-    // Work out the maximum recursion depth, plus one to include the head word.
-    let depth = 1 + if steps == 0 { head.len() } else { steps };
-    state.body.reserve(depth);
+    state.body.reserve(state.depth);
 
     // Start the recursive search. On the first call, previous_i must be outside the range of the string.
-    find_rec(&mut state, depth, head.len());
+    find_rec(&mut state, head.len(), &dict);
 
     println!("Found {} solutions up to {} steps.", state.count, steps);
 }
