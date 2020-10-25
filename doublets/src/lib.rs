@@ -16,6 +16,7 @@ struct State {
     body: Vec<Vec<char>>,
     // How many solutions were found.
     count: usize,
+    previous_i: usize,
 }
 
 fn to_string(v: &[char]) -> String {
@@ -40,9 +41,11 @@ fn print_solution(f: &Fixed, s: &State) {
 
 // Recursively search for a solution until we reach the specified depth.
 // Use the usual depth first backtracking method.
-fn find_rec(f: &Fixed, s: &mut State, previous_i: usize) {
+fn find_rec(f: &Fixed, s: &mut State) {
     // Add this word to the progress so far (on the first call it's the head word).
     s.body.push(s.word.clone());
+
+    let previous_i = s.previous_i;
 
     // Iterate through each letter in the word, except the one that was changed at the previous level.
     // Without the filter it runs about 10x slower.
@@ -62,7 +65,9 @@ fn find_rec(f: &Fixed, s: &mut State, previous_i: usize) {
                 && !s.body.contains(&s.word)
                 && f.dict.contains(&to_string(&s.word))
             {
-                find_rec(f, s, i);
+                s.previous_i = i;
+                // todo: queue or recurse?
+                find_rec(f, s);
             }
         }
 
@@ -84,12 +89,14 @@ pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
         word: head.to_lowercase().chars().collect(),
         body: Vec::new(),
         count: 0,
+        // On the first call, previous_i must be outside the range of the string.
+        previous_i: head.len(),
     };
 
     state.body.reserve(fixed.depth);
 
-    // Start the recursive search. On the first call, previous_i must be outside the range of the string.
-    find_rec(&fixed, &mut state, head.len());
+    // Start the recursive search.
+    find_rec(&fixed, &mut state);
 
     println!(
         "Found {} solutions up to {} steps.",
