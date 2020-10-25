@@ -15,7 +15,9 @@ struct State {
     // The progress so far to the solution, starting with the head word.
     body: Vec<Vec<char>>,
     // How many solutions were found.
+    // todo: change to Vec of solutions
     count: usize,
+    // The index of the last letter changed, so we don't change it again immediately.
     previous_i: usize,
 }
 
@@ -61,6 +63,7 @@ fn find_rec(f: &Fixed, s: &mut State) {
                 print_solution(f, s);
                 s.count += 1;
             // Recurse if the word is not already used, and is in the dictionary.
+            // Check the recursion limit first to avoid expensive lookups.
             } else if s.body.len() < f.depth
                 && !s.body.contains(&s.word)
                 && f.dict.contains(&to_string(&s.word))
@@ -71,6 +74,7 @@ fn find_rec(f: &Fixed, s: &mut State) {
             }
         }
 
+        // Restore the original letter after trying all the others.
         s.word[i] = orig_char;
     }
 
@@ -78,6 +82,7 @@ fn find_rec(f: &Fixed, s: &mut State) {
 }
 
 pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
+    // Things that don't change during the search.
     let fixed = Fixed {
         tail: tail.to_lowercase().chars().collect(),
         dict,
@@ -85,6 +90,8 @@ pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
         depth: 1 + if steps == 0 { head.len() } else { steps },
     };
 
+    // The changing part of the state. It's updated during the recursion
+    // and only cloned to put in the queue for other threads.
     let mut state = State {
         word: head.to_lowercase().chars().collect(),
         body: Vec::new(),
