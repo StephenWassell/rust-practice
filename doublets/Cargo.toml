@@ -7,5 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-structopt = "*"
-fnv = "*"
+crossbeam = "0.7.3"
+fnv = "1.0.7"
+structopt = "0.3.15"
