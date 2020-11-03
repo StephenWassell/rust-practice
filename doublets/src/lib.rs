@@ -1,6 +1,8 @@
-use crossbeam::scope;
-use crossbeam::crossbeam_channel::bounded;
+use crossbeam::crossbeam_channel;
 use fnv::FnvHashSet;
+use std::sync::Arc;
+use std::sync::atomic::AtomicIsize;
+use std::sync::atomic::Ordering;
 
 // Things that don't change during the search and can be immutable.
 struct Fixed {
@@ -11,13 +13,12 @@ struct Fixed {
     depth: usize,
 }
 
+// The state of the search on this thread. It can be cloned to continue the search on another thread.
 struct State {
     // Initially the head word, updated during the iteration until it's equal to the tail word.
     word: Vec<char>,
     // The progress so far to the solution, starting with the head word.
     body: Vec<Vec<char>>,
-    // Solutions found on this thread: Vec of body Vecs.
-    solutions: Vec<Vec<Vec<char>>>,
     // The index of the last letter changed, so we don't change it again immediately.
     previous_i: usize,
 }
@@ -46,7 +47,13 @@ fn print_solutions(fixed: &Fixed, solutions: &Vec<Vec<Vec<char>>>) {
 
 // Recursively search for a solution until we reach the specified depth.
 // Use the usual depth first backtracking method.
-fn find_rec(f: &Fixed, s: &mut State) {
+fn find_rec(
+    f: &Fixed,
+    s: &mut State,
+    running_jobs: &AtomicIsize,
+    state_sender: &crossbeam::Sender<State>,
+    solution_sender: &crossbeam::Sender<Vec<Vec<char>>>,
+) {
     // Add this word to the progress so far (on the first call it's the head word).
     s.body.push(s.word.clone());
 
@@ -63,9 +70,8 @@ fn find_rec(f: &Fixed, s: &mut State) {
 
             // Check if this is a solution before the dictionary check, in case the tail is not a real word.
             if s.word == f.tail {
-                // print_solution(f, s);
-                // let solution = s.body.clone();
-                s.solutions.push(s.body.clone());
+                // It's a solution, add to the list to return.
+                solution_sender.send(s.body.clone()).unwrap();
             // Recurse if the word is not already used, and is in the dictionary.
             // Check the recursion limit first to avoid expensive lookups.
             } else if s.body.len() < f.depth
@@ -73,8 +79,8 @@ fn find_rec(f: &Fixed, s: &mut State) {
                 && f.dict.contains(&to_string(&s.word))
             {
                 s.previous_i = i;
-                // todo: queue or recurse?
-                find_rec(f, s);
+                // todo: queue or recurse? running_jobs++, state_sender.send
+                find_rec(f, s, running_jobs, state_sender, solution_sender);
             }
         }
 
@@ -86,35 +92,55 @@ fn find_rec(f: &Fixed, s: &mut State) {
 }
 
 fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
-    let mut all_solutions = Vec::new();
     let worker_count = 1; // todo: num of cores
-    
-    scope(|s| {
-        let (sender, receiver) = bounded(worker_count);
-        sender.send(initial_state).unwrap();
-        
+
+    // Create a bounded channel initially containing one item, the initial state.
+    let (state_sender, state_receiver) = crossbeam_channel::bounded(worker_count);
+    state_sender.send(initial_state).unwrap();
+
+    // One job in progress, the initial state. This will be incremented when a new job is queued,
+    // and decremented when it's been completed by a worker thread. When it's 0 we've finished.
+    let running_jobs = Arc::new(AtomicIsize::new(1));
+
+    // Threads will return solutions through this channel.
+    let (solution_sender, solution_receiver) = crossbeam_channel::unbounded();
+
+    crossbeam::scope(|s| {
+        // Create the thread pool.
         let mut workers = Vec::new();
         for _ in 0..worker_count {
-            let receiver_clone = receiver.clone();
+            // Clone both ends of the state channel to pass to the threads.
+            let state_receiver_clone = state_receiver.clone();
+            let state_sender_clone = state_sender.clone();
+
+            let running_jobs_clone = running_jobs.clone();
+
+            let solution_sender_clone = solution_sender.clone();
 
             workers.push(s.spawn(move |_| {
-                let mut solutions = Vec::new();
+                // todo: loop until all threads have finished working
 
-                let mut state = receiver_clone.recv().unwrap();
-                find_rec(fixed, &mut state);
-                solutions.append(&mut state.solutions);
+                println!("started a thread");
 
-                solutions
-            }))
+                let mut state = state_receiver_clone.recv().unwrap();
+                find_rec(fixed, &mut state, &running_jobs_clone, &state_sender_clone, &solution_sender_clone);
+
+                running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
+                // todo: if it's now 0 stop all threads
+
+                println!("ended a thread");
+            }));
         }
 
         for worker in workers {
-            let mut solutions = worker.join().unwrap();
-            all_solutions.append(&mut solutions);
+            worker.join().unwrap();
         }
-    }).unwrap();
+    })
+    .unwrap();
 
-    all_solutions
+    println!("threads finished");
+
+    solution_receiver.try_iter().collect()
 }
 
 pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
@@ -131,7 +157,6 @@ pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
     let initial_state = State {
         word: head.to_lowercase().chars().collect(),
         body: Vec::with_capacity(fixed.depth),
-        solutions: Vec::new(),
         // On the first call, previous_i must be outside the range of the string.
         previous_i: head.len(),
     };
