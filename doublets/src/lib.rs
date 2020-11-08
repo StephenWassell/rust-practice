@@ -23,6 +23,11 @@ struct State {
     previous_i: usize,
 }
 
+enum QueueEntry {
+    Job(State),
+    Finished,
+}
+
 fn to_string(v: &[char]) -> String {
     v.iter().collect()
 }
@@ -51,7 +56,7 @@ fn find_rec(
     f: &Fixed,
     s: &mut State,
     running_jobs: &AtomicIsize,
-    state_sender: &crossbeam::Sender<State>,
+    state_sender: &crossbeam::Sender<QueueEntry>,
     solution_sender: &crossbeam::Sender<Vec<Vec<char>>>,
 ) {
     // Add this word to the progress so far (on the first call it's the head word).
@@ -96,7 +101,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
 
     // Create a bounded channel initially containing one item, the initial state.
     let (state_sender, state_receiver) = crossbeam_channel::bounded(worker_count);
-    state_sender.send(initial_state).unwrap();
+    state_sender.send(QueueEntry::Job(initial_state)).unwrap();
 
     // One job in progress, the initial state. This will be incremented when a new job is queued,
     // and decremented when it's been completed by a worker thread. When it's 0 we've finished.
@@ -117,16 +122,26 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
 
             let solution_sender_clone = solution_sender.clone();
 
+            println!("started a thread");
+            
             workers.push(s.spawn(move |_| {
-                // todo: loop until all threads have finished working
+                // Loop until all threads have finished working
+                loop {
+                    match state_receiver_clone.recv().unwrap() {
+                        QueueEntry::Finished => { break },
+                        QueueEntry::Job(mut state) => {
+                            find_rec(fixed, &mut state, &running_jobs_clone, &state_sender_clone, &solution_sender_clone);
 
-                println!("started a thread");
-
-                let mut state = state_receiver_clone.recv().unwrap();
-                find_rec(fixed, &mut state, &running_jobs_clone, &state_sender_clone, &solution_sender_clone);
-
-                running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
-                // todo: if it's now 0 stop all threads
+                            let prev_running_jobs = running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
+                            // Old count was 1 so new count must be 0, no work left so time to stop the threads.
+                            if prev_running_jobs == 1 {
+                                for _ in 0..worker_count {
+                                    state_sender_clone.send(QueueEntry::Finished).unwrap();
+                                }
+                            }
+                        }
+                    }
+                }
 
                 println!("ended a thread");
             }));
