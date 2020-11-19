@@ -14,6 +14,7 @@ struct Fixed {
 }
 
 // The state of the search on this thread. It can be cloned to continue the search on another thread.
+#[derive(Clone)]
 struct State {
     // Initially the head word, updated during the iteration until it's equal to the tail word.
     word: Vec<char>,
@@ -84,8 +85,14 @@ fn find_rec(
                 && f.dict.contains(&to_string(&s.word))
             {
                 s.previous_i = i;
-                // todo: queue or recurse? running_jobs++, state_sender.send
-                find_rec(f, s, running_jobs, state_sender, solution_sender);
+                // Add to the queue if there's space, else recurse on this thread.
+                if state_sender.is_full() {
+                    find_rec(f, s, running_jobs, state_sender, solution_sender);
+                } else {
+                    println!("sending a job");
+                    running_jobs.fetch_add(1, Ordering::SeqCst);
+                    state_sender.send(QueueEntry::Job(s.clone())).unwrap();
+                }
             }
         }
 
@@ -97,10 +104,11 @@ fn find_rec(
 }
 
 fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
-    let worker_count = 1; // todo: num of cores
+    let worker_count = 4; // todo: num of cores
+    let channel_size = 2;
 
     // Create a bounded channel initially containing one item, the initial state.
-    let (state_sender, state_receiver) = crossbeam_channel::bounded(worker_count);
+    let (state_sender, state_receiver) = crossbeam_channel::bounded(channel_size);
     state_sender.send(QueueEntry::Job(initial_state)).unwrap();
 
     // One job in progress, the initial state. This will be incremented when a new job is queued,
@@ -130,6 +138,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     match state_receiver_clone.recv().unwrap() {
                         QueueEntry::Finished => { break },
                         QueueEntry::Job(mut state) => {
+                            println!("starting a job");
                             find_rec(fixed, &mut state, &running_jobs_clone, &state_sender_clone, &solution_sender_clone);
 
                             let prev_running_jobs = running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
