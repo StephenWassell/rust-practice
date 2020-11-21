@@ -1,8 +1,10 @@
 use crossbeam::crossbeam_channel;
 use fnv::FnvHashSet;
-use std::sync::Arc;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::thread;
+use std::time::Instant;
 
 // Things that don't change during the search and can be immutable.
 struct Fixed {
@@ -11,6 +13,7 @@ struct Fixed {
     tail: Vec<char>,
     // Maximum recursion depth = max body.len()
     depth: usize,
+    start_time: Instant,
 }
 
 // The state of the search on this thread. It can be cloned to continue the search on another thread.
@@ -87,9 +90,20 @@ fn find_rec(
                 s.previous_i = i;
                 // Add to the queue if there's space, else recurse on this thread.
                 if state_sender.is_full() {
-                    find_rec(f, s, running_jobs, state_sender, solution_sender);
+                    find_rec(
+                        f,
+                        s,
+                        running_jobs,
+                        state_sender,
+                        solution_sender,
+                    );
                 } else {
-                    println!("sending a job");
+                    println!(
+                        "{} {:?} send",
+                        f.start_time.elapsed().as_nanos(),
+                        thread::current().id()
+                    );
+
                     running_jobs.fetch_add(1, Ordering::SeqCst);
                     state_sender.send(QueueEntry::Job(s.clone())).unwrap();
                 }
@@ -130,18 +144,40 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
 
             let solution_sender_clone = solution_sender.clone();
 
-            println!("started a thread");
-            
             workers.push(s.spawn(move |_| {
+                println!(
+                    "{} {:?} create",
+                    fixed.start_time.elapsed().as_nanos(),
+                    thread::current().id()
+                );
+            
                 // Loop until all threads have finished working
                 loop {
                     match state_receiver_clone.recv().unwrap() {
-                        QueueEntry::Finished => { break },
+                        QueueEntry::Finished => break,
                         QueueEntry::Job(mut state) => {
-                            println!("starting a job");
-                            find_rec(fixed, &mut state, &running_jobs_clone, &state_sender_clone, &solution_sender_clone);
+                            println!(
+                                "{} {:?} starting",
+                                fixed.start_time.elapsed().as_nanos(),
+                                thread::current().id()
+                            );
 
-                            let prev_running_jobs = running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
+                            find_rec(
+                                fixed,
+                                &mut state,
+                                &running_jobs_clone,
+                                &state_sender_clone,
+                                &solution_sender_clone,
+                            );
+
+                            println!(
+                                "{} {:?} waiting",
+                                fixed.start_time.elapsed().as_nanos(),
+                                thread::current().id()
+                            );
+
+                            let prev_running_jobs =
+                                running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
                             // Old count was 1 so new count must be 0, no work left so time to stop the threads.
                             if prev_running_jobs == 1 {
                                 for _ in 0..worker_count {
@@ -152,7 +188,11 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     }
                 }
 
-                println!("ended a thread");
+                println!(
+                    "{} {:?} ended",
+                    fixed.start_time.elapsed().as_nanos(),
+                    thread::current().id()
+                );
             }));
         }
 
@@ -174,6 +214,7 @@ pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
         dict,
         // Work out the maximum recursion depth, plus one to include the head word.
         depth: 1 + if steps == 0 { head.len() } else { steps },
+        start_time: Instant::now(),
     };
 
     // The changing part of the shared state. It's updated during the recursion
