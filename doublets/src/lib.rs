@@ -90,13 +90,7 @@ fn find_rec(
                 s.previous_i = i;
                 // Add to the queue if there's space, else recurse on this thread.
                 if state_sender.is_full() {
-                    find_rec(
-                        f,
-                        s,
-                        running_jobs,
-                        state_sender,
-                        solution_sender,
-                    );
+                    find_rec(f, s, running_jobs, state_sender, solution_sender);
                 } else {
                     println!(
                         "{} {:?} send",
@@ -104,7 +98,7 @@ fn find_rec(
                         thread::current().id()
                     );
 
-                    running_jobs.fetch_add(1, Ordering::SeqCst);
+                    running_jobs.fetch_add(1, Ordering::Relaxed);
                     state_sender.send(QueueEntry::Job(s.clone())).unwrap();
                 }
             }
@@ -136,13 +130,11 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
         // Create the thread pool.
         let mut workers = Vec::new();
         for _ in 0..worker_count {
-            // Clone both ends of the state channel to pass to the threads.
+            // Clone objects to pass to the threads. Do it here because they're used in the loop.
             let state_receiver_clone = state_receiver.clone();
             let state_sender_clone = state_sender.clone();
-
-            let running_jobs_clone = running_jobs.clone();
-
             let solution_sender_clone = solution_sender.clone();
+            let running_jobs_clone = running_jobs.clone();
 
             workers.push(s.spawn(move |_| {
                 println!(
@@ -150,7 +142,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     fixed.start_time.elapsed().as_nanos(),
                     thread::current().id()
                 );
-            
+
                 // Loop until all threads have finished working
                 loop {
                     match state_receiver_clone.recv().unwrap() {
@@ -177,7 +169,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                             );
 
                             let prev_running_jobs =
-                                running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
+                                running_jobs_clone.fetch_sub(1, Ordering::Relaxed);
                             // Old count was 1 so new count must be 0, no work left so time to stop the threads.
                             if prev_running_jobs == 1 {
                                 for _ in 0..worker_count {
