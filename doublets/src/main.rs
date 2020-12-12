@@ -28,6 +28,12 @@ struct Opt {
     #[structopt(short, long, default_value = "0")]
     steps: usize,
 
+    #[structopt(short, long, default_value = "4")]
+    workers: usize,
+
+    #[structopt(short, long, default_value = "4")]
+    channel: usize,
+
     #[structopt(short, long, default_value = "/usr/share/dict/words")]
     dict: String,
 
@@ -51,5 +57,12 @@ fn main() {
         opt.head.len()
     );
 
-    doublets::find(&opt.head, &opt.tail, dict, opt.steps);
+    doublets::find(
+        &opt.head,
+        &opt.tail,
+        dict,
+        opt.steps,
+        opt.workers,
+        opt.channel,
+    );
 }

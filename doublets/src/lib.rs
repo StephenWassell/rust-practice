@@ -9,10 +9,13 @@ use std::time::Instant;
 // Things that don't change during the search and can be immutable.
 struct Fixed {
     dict: FnvHashSet<String>,
-    // The word we're trying to reach.
+    // The tail is the word we're trying to reach.
     tail: Vec<char>,
     // Maximum recursion depth = max body.len()
     depth: usize,
+    // Concurrency parameters.
+    worker_count: usize,
+    channel_size: usize,
     start_time: Instant,
 }
 
@@ -27,6 +30,7 @@ struct State {
     previous_i: usize,
 }
 
+// The queue can contain jobs (with a copy of the search state) or a signal to stop.
 enum QueueEntry {
     Job(State),
     Finished,
@@ -54,9 +58,16 @@ fn print_solutions(fixed: &Fixed, solutions: &Vec<Vec<Vec<char>>>) {
     }
 }
 
+fn dict_contains(dict: &FnvHashSet<String>, word: &Vec<char>) -> bool {
+    // println!("lookup");
+    dict.contains(&to_string(word))
+}
+
 // Recursively search for a solution until we reach the specified depth.
-// Use the usual depth first backtracking method.
-fn find_rec(
+// Use the usual depth first backtracking method, unless there's space
+// in the job queue - then push a copy of the state and continue with
+// the next attempt.
+fn find_recursive(
     f: &Fixed,
     s: &mut State,
     running_jobs: &AtomicIsize,
@@ -66,31 +77,34 @@ fn find_rec(
     // Add this word to the progress so far (on the first call it's the head word).
     s.body.push(s.word.clone());
 
+    // The index of the letter in the word which was changed at the previous recursion level.
     let previous_i = s.previous_i;
 
-    // Iterate through each letter in the word, except the one that was changed at the previous level.
-    // Without the filter it runs about 10x slower.
+    // Iterate through each letter in the word, except the one that was changed previously.
+    // Without the previous_i filter it runs about 10x slower.
     for i in (0..f.tail.len()).filter(|&i| i != previous_i) {
         let orig_char = s.word[i];
 
-        // Try substituting each of the rest of the alphabet.
+        // Try substituting each of the rest of the alphabet for the letter at index i.
         for new_char in ('a'..'z').filter(|&c| c != orig_char) {
             s.word[i] = new_char;
 
             // Check if this is a solution before the dictionary check, in case the tail is not a real word.
             if s.word == f.tail {
-                // It's a solution, add to the list to return.
+                // We've reached the tail word, so add the sequence to the list of solutions.
                 solution_sender.send(s.body.clone()).unwrap();
-            // Recurse if the word is not already used, and is in the dictionary.
-            // Check the recursion limit first to avoid expensive lookups.
+
+            // Recurse or push to queue if the word is not already used, and is in the dictionary.
+            // Check the recursion limit first to avoid expensive hash lookups.
             } else if s.body.len() < f.depth
                 && !s.body.contains(&s.word)
-                && f.dict.contains(&to_string(&s.word))
+                && dict_contains(&f.dict, &s.word)
             {
                 s.previous_i = i;
-                // Add to the queue if there's space, else recurse on this thread.
+
+                // Add to the job queue if there's space, else recurse on this thread.
                 if state_sender.is_full() {
-                    find_rec(f, s, running_jobs, state_sender, solution_sender);
+                    find_recursive(f, s, running_jobs, state_sender, solution_sender);
                 } else {
                     println!(
                         "{} {:?} send",
@@ -98,7 +112,12 @@ fn find_rec(
                         thread::current().id()
                     );
 
-                    running_jobs.fetch_add(1, Ordering::Relaxed);
+                    // Atomically increment the count of running jobs so we know when to finish.
+                    // It's decremented once the thread that takes it off the queue has returned
+                    // from it's call to find_recursive.
+                    running_jobs.fetch_add(1, Ordering::SeqCst);
+
+                    // Push a copy of the search state onto the job queue.
                     state_sender.send(QueueEntry::Job(s.clone())).unwrap();
                 }
             }
@@ -112,11 +131,8 @@ fn find_rec(
 }
 
 fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
-    let worker_count = 4; // todo: num of cores
-    let channel_size = 2;
-
     // Create a bounded channel initially containing one item, the initial state.
-    let (state_sender, state_receiver) = crossbeam_channel::bounded(channel_size);
+    let (state_sender, state_receiver) = crossbeam_channel::bounded(fixed.channel_size);
     state_sender.send(QueueEntry::Job(initial_state)).unwrap();
 
     // One job in progress, the initial state. This will be incremented when a new job is queued,
@@ -126,11 +142,14 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
     // Threads will return solutions through this channel.
     let (solution_sender, solution_receiver) = crossbeam_channel::unbounded();
 
+    // This allows use of variables from this function's scope in the worker threads.
     crossbeam::scope(|s| {
+
         // Create the thread pool.
         let mut workers = Vec::new();
-        for _ in 0..worker_count {
-            // Clone objects to pass to the threads. Do it here because they're used in the loop.
+        for _ in 0..fixed.worker_count {
+            // Clone objects to pass to the threads.
+            // Do it here because they're used in the following loop.
             let state_receiver_clone = state_receiver.clone();
             let state_sender_clone = state_sender.clone();
             let solution_sender_clone = solution_sender.clone();
@@ -143,7 +162,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     thread::current().id()
                 );
 
-                // Loop until all threads have finished working
+                // Loop until all threads have finished working.
                 loop {
                     match state_receiver_clone.recv().unwrap() {
                         QueueEntry::Finished => break,
@@ -154,7 +173,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                                 thread::current().id()
                             );
 
-                            find_rec(
+                            find_recursive(
                                 fixed,
                                 &mut state,
                                 &running_jobs_clone,
@@ -168,11 +187,14 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                                 thread::current().id()
                             );
 
+                            // Atomically decrement the count of running jobs.
                             let prev_running_jobs =
-                                running_jobs_clone.fetch_sub(1, Ordering::Relaxed);
-                            // Old count was 1 so new count must be 0, no work left so time to stop the threads.
+                                running_jobs_clone.fetch_sub(1, Ordering::SeqCst);
+
+                            // If the old count was 1 the new count must be 0:
+                            // there's no work left to do, so time to stop the threads.
                             if prev_running_jobs == 1 {
-                                for _ in 0..worker_count {
+                                for _ in 0..fixed.worker_count {
                                     state_sender_clone.send(QueueEntry::Finished).unwrap();
                                 }
                             }
@@ -199,13 +221,22 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
     solution_receiver.try_iter().collect()
 }
 
-pub fn find(head: &str, tail: &str, dict: FnvHashSet<String>, steps: usize) {
+pub fn find(
+    head: &str,
+    tail: &str,
+    dict: FnvHashSet<String>,
+    steps: usize,
+    worker_count: usize,
+    channel_size: usize,
+) {
     // Things that don't change during the search.
     let fixed = Fixed {
         tail: tail.to_lowercase().chars().collect(),
         dict,
         // Work out the maximum recursion depth, plus one to include the head word.
         depth: 1 + if steps == 0 { head.len() } else { steps },
+        worker_count,
+        channel_size,
         start_time: Instant::now(),
     };
 
