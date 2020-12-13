@@ -143,10 +143,8 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
     let (solution_sender, solution_receiver) = crossbeam_channel::unbounded();
 
     // This allows use of variables from this function's scope in the worker threads.
-    crossbeam::scope(|s| {
-
+    crossbeam::scope(|scope| {
         // Create the thread pool.
-        let mut workers = Vec::new();
         for _ in 0..fixed.worker_count {
             // Clone objects to pass to the threads.
             // Do it here because they're used in the following loop.
@@ -155,7 +153,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
             let solution_sender_clone = solution_sender.clone();
             let running_jobs_clone = running_jobs.clone();
 
-            workers.push(s.spawn(move |_| {
+            scope.spawn(move |_| {
                 println!(
                     "{} {:?} create",
                     fixed.start_time.elapsed().as_nanos(),
@@ -207,11 +205,7 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     fixed.start_time.elapsed().as_nanos(),
                     thread::current().id()
                 );
-            }));
-        }
-
-        for worker in workers {
-            worker.join().unwrap();
+            });
         }
     })
     .unwrap();
