@@ -4,7 +4,9 @@ use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::Instant;                // End of crossbeam::scope joins spawned threads.
+
+
 
 // Things that don't change during the search and can be immutable.
 struct Fixed {
@@ -40,7 +42,7 @@ fn to_string(v: &[char]) -> String {
     v.iter().collect()
 }
 
-fn print_solutions(fixed: &Fixed, solutions: &Vec<Vec<Vec<char>>>) {
+fn print_solutions(fixed: &Fixed, solutions: &[Vec<Vec<char>>]) {
     for body in solutions {
         // The first word in the body vector is the original head.
         // Print the head and tail in uppercase, the rest in lowercase.
@@ -58,7 +60,8 @@ fn print_solutions(fixed: &Fixed, solutions: &Vec<Vec<Vec<char>>>) {
     }
 }
 
-fn dict_contains(dict: &FnvHashSet<String>, word: &Vec<char>) -> bool {
+// The dictionary lookup is the slowest part. Would another data structure be faster?
+fn dict_contains(dict: &FnvHashSet<String>, word: &[char]) -> bool {
     // println!("lookup");
     dict.contains(&to_string(word))
 }
@@ -114,7 +117,7 @@ fn find_recursive(
 
                     // Atomically increment the count of running jobs so we know when to finish.
                     // It's decremented once the thread that takes it off the queue has returned
-                    // from it's call to find_recursive.
+                    // from its call to find_recursive.
                     running_jobs.fetch_add(1, Ordering::SeqCst);
 
                     // Push a copy of the search state onto the job queue.
@@ -207,6 +210,8 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                 );
             });
         }
+
+        // End of crossbeam::scope joins spawned threads.
     })
     .unwrap();
 
