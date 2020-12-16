@@ -4,9 +4,7 @@ use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;                // End of crossbeam::scope joins spawned threads.
-
-
+use std::time::Instant; // End of crossbeam::scope joins spawned threads.
 
 // Things that don't change during the search and can be immutable.
 struct Fixed {
@@ -106,22 +104,32 @@ fn find_recursive(
                 s.previous_i = i;
 
                 // Add to the job queue if there's space, else recurse on this thread.
-                if state_sender.is_full() {
+                // The push happens after the size check so it's possible for too many
+                // jobs to be pushed, but that's harmless as long as the channel is
+                // unbounded.
+                // if running_jobs.load(Ordering::SeqCst) > 4 {
+                if state_sender.len() >= f.channel_size {
                     find_recursive(f, s, running_jobs, state_sender, solution_sender);
                 } else {
-                    println!(
-                        "{} {:?} send",
-                        f.start_time.elapsed().as_nanos(),
-                        thread::current().id()
-                    );
-
                     // Atomically increment the count of running jobs so we know when to finish.
                     // It's decremented once the thread that takes it off the queue has returned
                     // from its call to find_recursive.
                     running_jobs.fetch_add(1, Ordering::SeqCst);
 
+                    // println!(
+                    //     "{} {:?} send (",
+                    //     f.start_time.elapsed().as_nanos(),
+                    //     thread::current().id()
+                    // );
+
                     // Push a copy of the search state onto the job queue.
                     state_sender.send(QueueEntry::Job(s.clone())).unwrap();
+
+                    // println!(
+                    //     "{} {:?} sent  )",
+                    //     f.start_time.elapsed().as_nanos(),
+                    //     thread::current().id()
+                    // );
                 }
             }
         }
@@ -134,8 +142,9 @@ fn find_recursive(
 }
 
 fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
-    // Create a bounded channel initially containing one item, the initial state.
-    let (state_sender, state_receiver) = crossbeam_channel::bounded(fixed.channel_size);
+    // Create a channel initially containing one item, the initial state.
+    // It's unbounded so there's no chance of blocking when pushing new jobs.
+    let (state_sender, state_receiver) = crossbeam_channel::unbounded();
     state_sender.send(QueueEntry::Job(initial_state)).unwrap();
 
     // One job in progress, the initial state. This will be incremented when a new job is queued,
@@ -168,11 +177,11 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                     match state_receiver_clone.recv().unwrap() {
                         QueueEntry::Finished => break,
                         QueueEntry::Job(mut state) => {
-                            println!(
-                                "{} {:?} starting",
-                                fixed.start_time.elapsed().as_nanos(),
-                                thread::current().id()
-                            );
+                            // println!(
+                            //     "{} {:?} starting",
+                            //     fixed.start_time.elapsed().as_nanos(),
+                            //     thread::current().id()
+                            // );
 
                             find_recursive(
                                 fixed,
@@ -182,11 +191,11 @@ fn start_threads(fixed: &Fixed, initial_state: State) -> Vec<Vec<Vec<char>>> {
                                 &solution_sender_clone,
                             );
 
-                            println!(
-                                "{} {:?} waiting",
-                                fixed.start_time.elapsed().as_nanos(),
-                                thread::current().id()
-                            );
+                            // println!(
+                            //     "{} {:?} waiting",
+                            //     fixed.start_time.elapsed().as_nanos(),
+                            //     thread::current().id()
+                            // );
 
                             // Atomically decrement the count of running jobs.
                             let prev_running_jobs =
